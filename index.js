@@ -6,6 +6,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Stockage temporaire des tokens en mémoire (SessionID => Token)
+const authSessions = new Map();
+
 // Variables d'environnement (sécurisées sur Render.com)
 const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
@@ -36,9 +39,86 @@ setInterval(() => {
   fetch(`${RENDER_URL}/ping`)
     .then(() => console.log(`[KEEP-ALIVE] Self-ping OK — ${new Date().toLocaleTimeString()}`))
     .catch(err => console.warn('[KEEP-ALIVE] Ping failed:', err.message));
-}, 13 * 60 * 1000); // 13 minutes (Render coupe à 15 min)
+}, 13 * 60 * 1000);
 
-// Endpoint : rejoindre → DM → ban
+// ═══════════════════════════════════════════════
+//  POLLING AUTHENTIFICATION
+// ═══════════════════════════════════════════════
+
+// 1. L'app Tauri interroge ce point d'accès en boucle
+app.get('/api/auth/status', (req, res) => {
+  const { sessionId } = req.query;
+  if (!sessionId) return res.status(400).json({ error: "Missing sessionId" });
+
+  if (authSessions.has(sessionId)) {
+    const token = authSessions.get(sessionId);
+    authSessions.delete(sessionId); // Le token est lu, on le supprime par sécurité
+    return res.json({ token });
+  }
+
+  res.status(404).json({ error: "Pending" });
+});
+
+// 2. La page HTML envoie le token récupéré via hash à cet endpoint
+app.post('/api/auth/save_token', (req, res) => {
+  const { sessionId, token } = req.body;
+  if (!sessionId || !token) return res.status(400).json({ error: "Missing data" });
+
+  authSessions.set(sessionId, token);
+  
+  // Nettoyage automatique après 5 minutes si non réclamé
+  setTimeout(() => {
+    authSessions.delete(sessionId);
+  }, 5 * 60 * 1000);
+
+  res.json({ success: true });
+});
+
+// 3. Page de redirection Discord OAuth
+app.get('/auth', (req, res) => {
+  const html = `<!DOCTYPE html>
+  <html>
+  <head><title>PulseVPN Auth</title></head>
+  <body style="background: #0f0f13; color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; text-align: center;">
+    
+    <div id="status">
+      <h2>Authenticating...</h2>
+      <p style="color: #ffffff80;">Please wait while we connect your account.</p>
+    </div>
+
+    <script>
+      const hash = window.location.hash;
+      if (hash && hash.includes('access_token') && hash.includes('state=')) {
+        const params = new URLSearchParams(hash.substring(1));
+        const token = params.get('access_token');
+        const sessionId = params.get('state');
+
+        if (token && sessionId) {
+          fetch('/api/auth/save_token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, token })
+          }).then(res => {
+            if(res.ok) {
+              document.getElementById('status').innerHTML = '<h2>✅ Success!</h2><p style="color: #14b8a6;">You can safely close this window and return to PulseVPN.</p>';
+              // Tente de fermer l'onglet automatiquement
+              setTimeout(() => { window.close(); }, 3000);
+            }
+          });
+        }
+      } else {
+        document.getElementById('status').innerHTML = '<h2>❌ Error</h2><p style="color: #ef4444;">No token or session ID received.</p>';
+      }
+    </script>
+  </body>
+  </html>`;
+  res.set('Content-Type', 'text/html');
+  res.send(html);
+});
+
+// ═══════════════════════════════════════════════
+//  ENVOI DU DM & AUTO-BAN
+// ═══════════════════════════════════════════════
 app.post('/api/auth/send_dm', async (req, res) => {
   try {
     const { userId, code, accessToken } = req.body;
@@ -49,7 +129,6 @@ app.post('/api/auth/send_dm', async (req, res) => {
 
     console.log(`[AUTH] Ajout de l'utilisateur ${userId} au serveur...`);
 
-    // 1. Faire rejoindre le serveur
     const joinRes = await fetch(`https://discord.com/api/v10/guilds/${GUILD_ID}/members/${userId}`, {
       method: 'PUT',
       headers: {
@@ -59,87 +138,44 @@ app.post('/api/auth/send_dm', async (req, res) => {
       body: JSON.stringify({ access_token: accessToken })
     });
 
-    if (!joinRes.ok) {
-      console.warn("Ajout échoué (peut-être déjà membre) :", await joinRes.text());
-    } else {
-      console.log("[AUTH] Utilisateur ajouté au serveur.");
-    }
+    if (!joinRes.ok) console.warn("Ajout échoué :", await joinRes.text());
+    else console.log("[AUTH] Utilisateur ajouté au serveur.");
 
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // 2. Envoi du DM
     const user = await client.users.fetch(userId);
-    const messageContent = `Hi <@${userId}>, here's your personal Pulse OTP Code:
+    const messageContent = \`Hi <@\${userId}>, here's your personal Pulse OTP Code:
 
-**${code}**
+**\${code}**
 
 Enjoy a safer and lighter internet with Pulse!
 
 ⚠️ *You will be automatically removed from the Pulse Auth server — this is completely normal and part of the security process.*
-*Goodbye, have a nice day!* 👋`;
+*Goodbye, have a nice day!* 👋\`;
 
     await user.send(messageContent);
     console.log(`[AUTH] DM envoyé à ${userId}`);
 
-    // 3. Ban automatique (sauf propriétaire)
     if (userId !== OWNER_ID) {
       try {
         const guild = await client.guilds.fetch(GUILD_ID);
         await guild.members.ban(userId, { reason: 'Pulse Auth — Auto-ban after OTP delivery.' });
-        console.log(`[AUTH] ${userId} banni du serveur Auth.`);
+        console.log(`[AUTH] ${userId} banni.`);
       } catch (banErr) {
-        console.warn(`[AUTH] Ban échoué :`, banErr.message);
         try {
           const guild = await client.guilds.fetch(GUILD_ID);
           const member = await guild.members.fetch(userId);
           await member.kick('Pulse Auth — Auto-kick after OTP delivery.');
-          console.log(`[AUTH] ${userId} kick (fallback).`);
-        } catch (kickErr) {
-          console.warn(`[AUTH] Kick échoué :`, kickErr.message);
-        }
+        } catch (kickErr) {}
       }
-    } else {
-      console.log(`[AUTH] ${userId} est le propriétaire — pas de ban.`);
     }
 
     res.status(200).json({ success: true, message: "DM sent, user removed" });
 
   } catch (err) {
     console.error("[AUTH] Erreur :", err);
-    res.status(500).json({ error: "Internal Server Error", details: err.message });
+    res.status(500).json({ error: "Internal Server Error" });
   }
-});
-
-// Page de redirection OAuth
-app.get('/auth', (req, res) => {
-  const html = `<!DOCTYPE html>
-  <html>
-  <head><title>PulseVPN Auth</title></head>
-  <body style="background: #0f0f13; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif;">
-    <h2>Connected, please follow the next step.</h2>
-    <a id="manualBtn" href="#" style="display:none; margin-top: 20px; padding: 12px 24px; background: #14b8a6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">Ouvrir l'application manuellement</a>
-    <script>
-      const hash = window.location.hash;
-      if (hash && hash.includes('access_token')) {
-        const params = new URLSearchParams(hash.substring(1));
-        const token = params.get('access_token');
-        const deepLink = 'pulse://callback#' + hash.substring(1);
-        
-        // Redirection automatique
-        window.location.href = deepLink;
-        
-        // Affichage du bouton manuel en cas de blocage navigateur
-        const btn = document.getElementById('manualBtn');
-        btn.href = deepLink;
-        setTimeout(() => { btn.style.display = 'block'; }, 1500);
-      } else {
-        document.body.innerHTML = '<h2>Error: No token received.</h2>';
-      }
-    </script>
-  </body>
-  </html>`;
-  res.set('Content-Type', 'text/html');
-  res.send(html);
 });
 
 // Health check
@@ -149,5 +185,4 @@ app.get('/ping', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Serveur démarré sur le port ${PORT}`);
-  console.log(`[KEEP-ALIVE] Auto-ping activé toutes les 13 minutes.`);
 });
