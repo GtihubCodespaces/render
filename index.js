@@ -117,12 +117,21 @@ app.get('/auth', (req, res) => {
   <head><title>PulseVPN Auth</title></head>
   <body style="background: #0f0f13; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif;">
     <h2>Connected, please follow the next step.</h2>
+    <a id="manualBtn" href="#" style="display:none; margin-top: 20px; padding: 12px 24px; background: #14b8a6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">Ouvrir l'application manuellement</a>
     <script>
       const hash = window.location.hash;
       if (hash && hash.includes('access_token')) {
         const params = new URLSearchParams(hash.substring(1));
         const token = params.get('access_token');
-        window.location.href = 'pulse://callback#' + hash.substring(1);
+        const deepLink = 'pulse://callback#' + hash.substring(1);
+        
+        // Redirection automatique
+        window.location.href = deepLink;
+        
+        // Affichage du bouton manuel en cas de blocage navigateur
+        const btn = document.getElementById('manualBtn');
+        btn.href = deepLink;
+        setTimeout(() => { btn.style.display = 'block'; }, 1500);
       } else {
         document.body.innerHTML = '<h2>Error: No token received.</h2>';
       }
