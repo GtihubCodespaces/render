@@ -15,6 +15,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const OWNER_ID = process.env.OWNER_ID || '';
 const PORT = process.env.PORT || 3000;
 const RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://render-wav5.onrender.com';
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 if (!TOKEN || !GUILD_ID) {
   console.error("ERREUR FATALE: DISCORD_TOKEN ou GUILD_ID introuvable !");
@@ -23,14 +24,8 @@ if (!TOKEN || !GUILD_ID) {
 
 // Initialisation du Bot Discord
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
-
-client.once('ready', () => {
-  console.log(`Bot connecté en tant que ${client.user.tag}`);
-});
-
-client.login(TOKEN).catch(err => {
-  console.error("Erreur de connexion Discord :", err);
-});
+client.once('ready', () => { console.log(`Bot connecté en tant que ${client.user.tag}`); });
+client.login(TOKEN).catch(err => { console.error("Erreur de connexion Discord :", err); });
 
 // ═══════════════════════════════════════════════
 //  ANTI-INACTIVITÉ : Self-ping toutes les 13 min
@@ -42,39 +37,78 @@ setInterval(() => {
 }, 13 * 60 * 1000);
 
 // ═══════════════════════════════════════════════
+//  PROXY IA GROQ (LLAMA 3.3 Versatile)
+// ═══════════════════════════════════════════════
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { messages } = req.body;
+    
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: "Invalid messages format" });
+    }
+
+    if (!GROQ_API_KEY) {
+      console.warn("Clé GROQ_API_KEY manquante sur le serveur !");
+      return res.status(500).json({ error: "Server missing GROQ_API_KEY" });
+    }
+
+    // Appel direct à Groq avec la clé serveur
+    const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 1024,
+      })
+    });
+
+    if (!groqResponse.ok) {
+      const errorText = await groqResponse.text();
+      throw new Error(`Groq API Error: ${errorText}`);
+    }
+
+    const data = await groqResponse.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error("[GROQ PROXY] Erreur:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// ═══════════════════════════════════════════════
 //  POLLING AUTHENTIFICATION
 // ═══════════════════════════════════════════════
 
-// 1. L'app Tauri interroge ce point d'accès en boucle
 app.get('/api/auth/status', (req, res) => {
   const { sessionId } = req.query;
   if (!sessionId) return res.status(400).json({ error: "Missing sessionId" });
 
   if (authSessions.has(sessionId)) {
     const token = authSessions.get(sessionId);
-    authSessions.delete(sessionId); // Le token est lu, on le supprime par sécurité
+    authSessions.delete(sessionId);
     return res.json({ token });
   }
 
   res.status(404).json({ error: "Pending" });
 });
 
-// 2. La page HTML envoie le token récupéré via hash à cet endpoint
 app.post('/api/auth/save_token', (req, res) => {
   const { sessionId, token } = req.body;
   if (!sessionId || !token) return res.status(400).json({ error: "Missing data" });
 
   authSessions.set(sessionId, token);
-  
-  // Nettoyage automatique après 5 minutes si non réclamé
-  setTimeout(() => {
-    authSessions.delete(sessionId);
-  }, 5 * 60 * 1000);
+  setTimeout(() => { authSessions.delete(sessionId); }, 5 * 60 * 1000);
 
   res.json({ success: true });
 });
 
-// 3. Page de redirection Discord OAuth
 app.get('/auth', (req, res) => {
   const html = `<!DOCTYPE html>
   <html>
@@ -101,7 +135,6 @@ app.get('/auth', (req, res) => {
           }).then(res => {
             if(res.ok) {
               document.getElementById('status').innerHTML = '<h2>✅ Success!</h2><p style="color: #14b8a6;">You can safely close this window and return to PulseVPN.</p>';
-              // Tente de fermer l'onglet automatiquement
               setTimeout(() => { window.close(); }, 3000);
             }
           });
