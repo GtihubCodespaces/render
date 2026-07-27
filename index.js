@@ -144,14 +144,14 @@ app.post('/api/auth/send_dm', async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     const user = await client.users.fetch(userId);
-    const messageContent = \`Hi <@\${userId}>, here's your personal Pulse OTP Code:
+    const messageContent = `Hi <@${userId}>, here's your personal Pulse OTP Code:
 
-**\${code}**
+**${code}**
 
 Enjoy a safer and lighter internet with Pulse!
 
 ⚠️ *You will be automatically removed from the Pulse Auth server — this is completely normal and part of the security process.*
-*Goodbye, have a nice day!* 👋\`;
+*Goodbye, have a nice day!* 👋`;
 
     await user.send(messageContent);
     console.log(`[AUTH] DM envoyé à ${userId}`);
