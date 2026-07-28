@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseVPN - Admin Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: #020617;
+      color: white;
+    }
+    .glass {
+      background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center relative overflow-hidden">
+  
+  <!-- Ambient Background -->
+  <div class="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-teal-500/20 rounded-full blur-[120px] pointer-events-none"></div>
+  <div class="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-[120px] pointer-events-none"></div>
+
+  <!-- Login Overlay -->
+  <div id="loginScreen" class="absolute inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex flex-col items-center justify-center">
+    <div class="glass p-10 rounded-3xl w-full max-w-md text-center shadow-2xl">
+      <div class="w-16 h-16 mx-auto bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(20,184,166,0.4)]">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+      </div>
+      <h2 class="text-3xl font-extrabold mb-2">Pulse Panel</h2>
+      <p class="text-white/50 mb-8 text-sm">Secure Admin Access Required</p>
+      
+      <input type="password" id="adminPwd" placeholder="Enter Owner Password" class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-teal-500 transition-colors mb-4 text-center tracking-widest">
+      
+      <button onclick="attemptLogin()" class="w-full bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(20,184,166,0.3)]">
+        Authenticate
+      </button>
+      <div id="loginError" class="text-red-500 text-sm mt-4 font-bold hidden">Invalid Password</div>
+    </div>
+  </div>
+
+  <!-- Main Dashboard (Hidden by default) -->
+  <div id="mainDashboard" class="w-full max-w-6xl p-8 hidden z-10">
+    <header class="flex justify-between items-center mb-10">
+      <div>
+        <h1 class="text-4xl font-extrabold tracking-tight">Pulse <span class="text-teal-400">Panel</span></h1>
+        <p class="text-white/50 text-sm mt-1">Live infrastructure & user overview</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2 bg-green-500/10 px-4 py-2 rounded-full border border-green-500/20">
+          <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+          <span class="text-green-500 text-xs font-bold uppercase">All Systems Operational</span>
+        </div>
+        <button onclick="location.reload()" class="glass px-4 py-2 rounded-full hover:bg-white/10 transition-colors text-sm font-bold">Refresh</button>
+      </div>
+    </header>
+
+    <!-- KPI Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      
+      <div class="glass p-6 rounded-3xl relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-teal-500/10 rounded-full blur-[30px] -translate-y-1/2 translate-x-1/2"></div>
+        <h3 class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">Total Users</h3>
+        <div class="text-5xl font-extrabold text-white" id="statTotalUsers">-</div>
+        <div class="mt-4 text-xs font-medium text-teal-400 flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+          Active Growth
+        </div>
+      </div>
+
+      <div class="glass p-6 rounded-3xl relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-[30px] -translate-y-1/2 translate-x-1/2"></div>
+        <h3 class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">Pro / Ultimate Users</h3>
+        <div class="text-5xl font-extrabold text-white" id="statProUsers">-</div>
+        <div class="mt-4 text-xs font-medium text-amber-400 flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          Paying Customers
+        </div>
+      </div>
+
+      <div class="glass p-6 rounded-3xl relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-[30px] -translate-y-1/2 translate-x-1/2"></div>
+        <h3 class="text-white/50 text-xs font-bold uppercase tracking-widest mb-1">Estimated MRR</h3>
+        <div class="text-5xl font-extrabold text-white flex items-baseline gap-1"><span class="text-2xl text-white/50">$</span><span id="statRevenue">-</span></div>
+        <div class="mt-4 text-xs font-medium text-purple-400 flex items-center gap-1">
+          Monthly Recurring Revenue
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Chart Area -->
+      <div class="lg:col-span-2 glass p-6 rounded-3xl flex flex-col">
+        <div class="flex justify-between items-start mb-6">
+          <div>
+            <h3 class="text-lg font-bold">Network Infrastructure</h3>
+            <p class="text-xs text-white/50">Server Load & Active Connections</p>
+          </div>
+          <div class="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-3 py-1 rounded-full text-[10px] font-bold uppercase flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+            Zero-Log Policy Enforced
+          </div>
+        </div>
+        
+        <div class="flex-1 relative min-h-[250px]">
+          <canvas id="loadChart"></canvas>
+        </div>
+        <div class="text-center text-[10px] text-white/30 mt-4 uppercase tracking-widest">
+          Strict No-Log Architecture. Traffic data is not recorded.
+        </div>
+      </div>
+
+      <!-- Recent Users List -->
+      <div class="glass p-6 rounded-3xl flex flex-col">
+        <h3 class="text-lg font-bold mb-1">Recent Accounts</h3>
+        <p class="text-xs text-white/50 mb-6">Latest registered users in the DB</p>
+        
+        <div class="flex-1 overflow-y-auto pr-2 space-y-3" id="userList">
+          <!-- Populated via JS -->
+          <div class="text-center text-white/30 text-sm mt-10">Loading...</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    let adminToken = '';
+
+    async function attemptLogin() {
+      const pwd = document.getElementById('adminPwd').value;
+      
+      try {
+        const res = await fetch('/api/admin/stats', {
+          headers: { 'Authorization': `Bearer ${pwd}` }
+        });
+        
+        if (res.ok) {
+          adminToken = pwd;
+          const data = await res.json();
+          document.getElementById('loginScreen').style.display = 'none';
+          document.getElementById('mainDashboard').style.display = 'block';
+          document.getElementById('loginError').style.display = 'none';
+          renderDashboard(data);
+        } else {
+          document.getElementById('loginError').style.display = 'block';
+        }
+      } catch (e) {
+        document.getElementById('loginError').style.display = 'block';
+        document.getElementById('loginError').innerText = "Network Error";
+      }
+    }
+
+    // Hit enter to login
+    document.getElementById('adminPwd').addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') attemptLogin();
+    });
+
+    function renderDashboard(data) {
+      document.getElementById('statTotalUsers').innerText = data.totalUsers;
+      document.getElementById('statProUsers').innerText = data.proUsers;
+      document.getElementById('statRevenue').innerText = (data.proUsers * 9.99).toFixed(2);
+
+      const ul = document.getElementById('userList');
+      ul.innerHTML = '';
+      if (!data.recentUsers || data.recentUsers.length === 0) {
+        ul.innerHTML = '<div class="text-center text-white/30 text-sm">No users found.</div>';
+      } else {
+        data.recentUsers.forEach(u => {
+          const isDev = u.email.toLowerCase() === 'brucker.zebulon@gmail.com';
+          const planBadge = isDev 
+            ? '<span class="bg-purple-500/20 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded text-[9px] font-bold uppercase">Ultimate</span>'
+            : (u.is_pro ? '<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded text-[9px] font-bold uppercase">Pro</span>' : '<span class="bg-white/10 text-white/50 border border-white/20 px-2 py-0.5 rounded text-[9px] font-bold uppercase">Free</span>');
+          
+          ul.innerHTML += `
+            <div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+              <div class="flex items-center gap-3 truncate">
+                <div class="w-8 h-8 rounded-full bg-teal-500/20 flex items-center justify-center text-teal-400 font-bold text-xs border border-teal-500/30 shrink-0">
+                  ${u.email.charAt(0).toUpperCase()}
+                </div>
+                <div class="truncate">
+                  <div class="text-sm font-bold text-white/90 truncate">${u.email}</div>
+                  <div class="text-[10px] text-white/40">${u.verified ? 'Verified' : 'Pending'}</div>
+                </div>
+              </div>
+              <div class="ml-2 shrink-0">${planBadge}</div>
+            </div>
+          `;
+        });
+      }
+
+      // Render Fake Server Load Chart
+      const ctx = document.getElementById('loadChart').getContext('2d');
+      
+      // Gradient
+      const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+      gradient.addColorStop(0, 'rgba(20, 184, 166, 0.4)');
+      gradient.addColorStop(1, 'rgba(20, 184, 166, 0.0)');
+
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ['12:00', '12:05', '12:10', '12:15', '12:20', '12:25', '12:30', '12:35'],
+          datasets: [{
+            label: 'Global Server Load (%)',
+            data: [35, 38, 34, 45, 52, 48, 60, 58],
+            borderColor: '#14b8a6',
+            backgroundColor: gradient,
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true,
+            pointBackgroundColor: '#14b8a6',
+            pointBorderColor: '#020617',
+            pointBorderWidth: 2,
+            pointRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(2, 6, 23, 0.9)',
+              titleColor: '#fff',
+              bodyColor: '#14b8a6',
+              borderColor: 'rgba(255,255,255,0.1)',
+              borderWidth: 1,
+              padding: 10,
+              displayColors: false
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: 'rgba(255, 255, 255, 0.3)', font: { size: 10 } }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { color: 'rgba(255, 255, 255, 0.3)', font: { size: 10 } }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
