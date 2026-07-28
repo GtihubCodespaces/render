@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@libsql/client');
@@ -26,7 +27,7 @@ const PAYPAL_BASE = PAYPAL_MODE === 'sandbox'
 //  BASE DE DONNÉES TURSO (LIBSQL)
 // ═══════════════════════════════════════════════
 const db = createClient({
-  url: (process.env.TURSO_DATABASE_URL || 'file:pulse.db').trim(), // Fallback local file:pulse.db si test sans variables env
+  url: (process.env.TURSO_DATABASE_URL || 'file:pulse.db').trim(),
   authToken: process.env.TURSO_AUTH_TOKEN ? process.env.TURSO_AUTH_TOKEN.trim() : undefined,
 });
 
@@ -55,10 +56,14 @@ const hashPassword = (pwd) => crypto.createHash('sha256').update(pwd).digest('he
 //  API BREVO (SENDINBLUE) - ENVOI OTP
 // ═══════════════════════════════════════════════
 async function sendOtpEmail(email, code) {
-  if (!BREVO_API_KEY) return console.warn("BREVO_API_KEY manquante, email non envoyé.");
+  console.log(`[AUTH] Tentative d'envoi d'email à ${email}...`);
+  if (!BREVO_API_KEY) {
+    console.warn("[AUTH] BREVO_API_KEY manquante, email non envoyé.");
+    return false;
+  }
   
   const payload = {
-    sender: { name: "PulseVPN", email: "pulsevpn@limoon-space.cloud" },
+    sender: { name: "PulseVPN", email: "noreply@pulsevpn.com" },
     to: [{ email: email }],
     subject: "Your PulseVPN Verification Code",
     htmlContent: `
@@ -79,9 +84,15 @@ async function sendOtpEmail(email, code) {
       headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) console.error("Erreur Brevo:", await res.text());
+    if (!res.ok) {
+      console.error("[AUTH] Erreur Brevo HTTP:", await res.text());
+      return false;
+    }
+    console.log(`[AUTH] Succès : Email envoyé à ${email}.`);
+    return true;
   } catch (err) {
-    console.error("Erreur réseau Brevo:", err);
+    console.error("[AUTH] Erreur réseau Brevo:", err);
+    return false;
   }
 }
 
@@ -97,34 +108,44 @@ app.post('/api/auth/register', async (req, res) => {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
   try {
+    console.log(`[AUTH] Inscription demandée pour: ${email}`);
     const rs = await db.execute({ sql: "SELECT id, verified FROM users WHERE email = ?", args: [email] });
     const row = rs.rows[0];
 
     if (row && row.verified) {
+      console.log(`[AUTH] Inscription échouée (déjà existant): ${email}`);
       return res.status(400).json({ error: "Cet email est déjà utilisé." });
     }
     
     // Insert ou remplace
+    let isDev = (email.toLowerCase() === 'brucker.zebulon@gmail.com');
     await db.execute({
-      sql: `INSERT OR REPLACE INTO users (id, email, password_hash, otp_code, verified, is_pro) VALUES (?, ?, ?, ?, 0, 0)`,
-      args: [row ? row.id : id, email, pwdHash, otp]
+      sql: `INSERT OR REPLACE INTO users (id, email, password_hash, otp_code, verified, is_pro) VALUES (?, ?, ?, ?, 0, ?)`,
+      args: [row ? row.id : id, email, pwdHash, otp, isDev ? 1 : 0]
     });
 
-    sendOtpEmail(email, otp);
+    const emailSent = await sendOtpEmail(email, otp);
+    if (!emailSent) {
+      console.error(`[AUTH] Échec final de l'envoi email pour ${email}`);
+      return res.status(500).json({ error: "L'envoi de l'email a échoué. Vérifiez la configuration Brevo." });
+    }
+
     res.json({ success: true, message: "Code OTP envoyé par email" });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erreur DB" });
+    console.error("[AUTH] Erreur DB Inscription:", err);
+    res.status(500).json({ error: "Erreur Base de Données" });
   }
 });
 
 app.post('/api/auth/verify', async (req, res) => {
   const { email, otp } = req.body;
   try {
+    console.log(`[AUTH] Tentative de vérification pour: ${email}`);
     const rs = await db.execute({ sql: "SELECT id, otp_code FROM users WHERE email = ?", args: [email] });
     const user = rs.rows[0];
 
     if (!user || user.otp_code !== otp) {
+      console.log(`[AUTH] Vérification échouée (code invalide) pour: ${email}`);
       return res.status(400).json({ error: "Code invalide" });
     }
     const token = crypto.randomBytes(32).toString('hex');
@@ -132,8 +153,10 @@ app.post('/api/auth/verify', async (req, res) => {
       sql: "UPDATE users SET verified = 1, otp_code = NULL, session_token = ? WHERE email = ?", 
       args: [token, email]
     });
+    console.log(`[AUTH] Vérification réussie pour: ${email}`);
     res.json({ success: true, token, user: { id: user.id, email } });
   } catch (err) {
+    console.error("[AUTH] Erreur Vérification:", err);
     res.status(500).json({ error: "Erreur Serveur" });
   }
 });
@@ -149,16 +172,45 @@ app.post('/api/auth/login', async (req, res) => {
     });
     const user = rs.rows[0];
 
-    if (!user) return res.status(401).json({ error: "Identifiants incorrects" });
-    if (!user.verified) return res.status(401).json({ error: "Email non vérifié. Veuillez vous réinscrire." });
+    if (!user) {
+      console.log(`[AUTH] Connexion échouée (identifiants incorrects) pour: ${email}`);
+      return res.status(401).json({ error: "Identifiants incorrects" });
+    }
+
+    // DEV OVERRIDE
+    let isProStatus = !!user.is_pro;
+    let devPlanName = 'Pulse Pro';
+    if (email.toLowerCase() === 'brucker.zebulon@gmail.com') {
+      isProStatus = true;
+      devPlanName = 'Pulse Ultimate';
+      if (!user.is_pro) {
+        await db.execute({ sql: "UPDATE users SET is_pro = 1 WHERE id = ?", args: [user.id] });
+      }
+    }
+
+    if (!user.verified) {
+      console.log(`[AUTH] Connexion échouée (non vérifié) pour: ${email}`);
+      return res.status(401).json({ error: "Email non vérifié. Veuillez vous réinscrire." });
+    }
 
     const token = crypto.randomBytes(32).toString('hex');
     await db.execute({
       sql: "UPDATE users SET session_token = ? WHERE id = ?",
       args: [token, user.id]
     });
-    res.json({ success: true, token, user: { id: user.id, email: user.email, isPro: !!user.is_pro } });
+    console.log(`[AUTH] Connexion réussie pour: ${email}`);
+    res.json({ 
+      success: true, 
+      token, 
+      user: { 
+        id: user.id, 
+        email: user.email, 
+        isPro: isProStatus,
+        planName: isProStatus ? devPlanName : 'Pulse Plus'
+      } 
+    });
   } catch (err) {
+    console.error("[AUTH] Erreur Connexion:", err);
     res.status(500).json({ error: "Erreur Serveur" });
   }
 });
@@ -174,10 +226,15 @@ async function getPayPalAccessToken() {
     body: 'grant_type=client_credentials'
   });
   const data = await res.json();
+  if (!res.ok) {
+    console.error("[PAYPAL] Token Error:", data);
+    throw new Error("Erreur d'authentification PayPal");
+  }
   return data.access_token;
 }
 
 app.post('/api/billing/create-order', async (req, res) => {
+  const { plan, price } = req.body || {};
   try {
     const token = await getPayPalAccessToken();
     const orderRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
@@ -186,15 +243,20 @@ app.post('/api/billing/create-order', async (req, res) => {
       body: JSON.stringify({
         intent: 'CAPTURE',
         purchase_units: [{
-          amount: { currency_code: 'USD', value: '4.99' },
-          description: "PulseVPN Pro - 1 Month"
+          amount: { currency_code: 'USD', value: price || '9.99' },
+          description: plan ? `${plan} - 1 Month` : "PulseVPN Pro - 1 Month"
         }]
       })
     });
     const order = await orderRes.json();
+    if (!orderRes.ok || !order.id) {
+      console.error("[PAYPAL] API Create Order Error:", order);
+      return res.status(400).json({ error: "PayPal a rejeté la création de la commande", details: order });
+    }
     res.json({ id: order.id });
   } catch (err) {
-    res.status(500).json({ error: "Erreur PayPal" });
+    console.error("[PAYPAL] Server Error Create Order:", err);
+    res.status(500).json({ error: "Erreur serveur interne lors de la création de la commande" });
   }
 });
 
@@ -224,7 +286,7 @@ app.post('/api/billing/capture-order', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-//  SERVEURS & IA (Déjà implémentés)
+//  SERVEURS & IA
 // ═══════════════════════════════════════════════
 const SERVERS = [
   { id: 'paris', city: 'Paris', country: 'France', flagCode: 'fr', ip: '72.61.192.44', coordinates: [2.2935, 48.8591], confUrl: 'https://raw.githubusercontent.com/eqq7/PulseVPN-Configs/main/Paris-EU.conf', load: 42 }
