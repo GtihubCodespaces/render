@@ -334,6 +334,36 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════
+//  ADMIN PANEL
+// ═══════════════════════════════════════════════
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'PulseOwnerPanel';
+
+app.get('/panel', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+app.get('/api/admin/stats', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth || auth !== `Bearer ${ADMIN_PASSWORD}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const totalUsersReq = await db.execute("SELECT COUNT(*) as count FROM users");
+    const proUsersReq = await db.execute("SELECT COUNT(*) as count FROM users WHERE is_pro = 1");
+    const recentReq = await db.execute("SELECT email, is_pro, verified FROM users ORDER BY rowid DESC LIMIT 15");
+    
+    res.json({
+      totalUsers: totalUsersReq.rows[0].count,
+      proUsers: proUsersReq.rows[0].count,
+      recentUsers: recentReq.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: "DB Error" });
+  }
+});
+
 // Ping
 app.get('/ping', (req, res) => { res.send('PONG'); });
 
