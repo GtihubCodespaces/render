@@ -58,7 +58,7 @@ async function sendOtpEmail(email, code) {
   if (!BREVO_API_KEY) return console.warn("BREVO_API_KEY manquante, email non envoyé.");
   
   const payload = {
-    sender: { name: "PulseVPN", email: "noreply@pulsevpn.com" },
+    sender: { name: "PulseVPN", email: "pulsevpn@limoon-space.cloud" },
     to: [{ email: email }],
     subject: "Your PulseVPN Verification Code",
     htmlContent: `
