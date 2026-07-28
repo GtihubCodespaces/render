@@ -12,11 +12,11 @@ app.use(express.json());
 //  CONFIGURATION & ENV VARS
 // ═══════════════════════════════════════════════
 const PORT = process.env.PORT || 3000;
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
-const PAYPAL_SECRET = process.env.PAYPAL_SECRET;
-const PAYPAL_MODE = process.env.PAYPAL_MODE || 'sandbox';
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const BREVO_API_KEY = process.env.BREVO_API_KEY ? process.env.BREVO_API_KEY.trim() : undefined;
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID ? process.env.PAYPAL_CLIENT_ID.trim() : undefined;
+const PAYPAL_SECRET = process.env.PAYPAL_SECRET ? process.env.PAYPAL_SECRET.trim() : undefined;
+const PAYPAL_MODE = process.env.PAYPAL_MODE ? process.env.PAYPAL_MODE.trim() : 'sandbox';
+const GROQ_API_KEY = process.env.GROQ_API_KEY ? process.env.GROQ_API_KEY.trim() : undefined;
 
 const PAYPAL_BASE = PAYPAL_MODE === 'sandbox' 
   ? 'https://api-m.sandbox.paypal.com' 
@@ -26,8 +26,8 @@ const PAYPAL_BASE = PAYPAL_MODE === 'sandbox'
 //  BASE DE DONNÉES TURSO (LIBSQL)
 // ═══════════════════════════════════════════════
 const db = createClient({
-  url: process.env.TURSO_DATABASE_URL || 'file:pulse.db', // Fallback local file:pulse.db si test sans variables env
-  authToken: process.env.TURSO_AUTH_TOKEN,
+  url: (process.env.TURSO_DATABASE_URL || 'file:pulse.db').trim(), // Fallback local file:pulse.db si test sans variables env
+  authToken: process.env.TURSO_AUTH_TOKEN ? process.env.TURSO_AUTH_TOKEN.trim() : undefined,
 });
 
 async function initDB() {
